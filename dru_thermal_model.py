@@ -51,7 +51,7 @@ class ThermalController(object):
     
     def feedback(self,x):
         Tc = x[0]
-        Tf = x[1]
+        Tf = x[2]
         Tref = self.reference_temperature
         
         error = Tref - Tf
@@ -86,7 +86,7 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
 
         # data time settings
         
-
+        # find where the step input ends
         self.t_stepfinal = self.tvec[np.where(mud.heater_dutycycle > 0)[0][-1]] - self.mud.tvector[np.where(self.mud.heater_dutycycle > 0)[0][0]]
 
 
@@ -96,24 +96,37 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         Rc = heater_gap/(cell_area*k_ss)
 
         Cf = 4000 * density_f * volume_f # estimate
-        Cc = cap_ss * mass_ss
+        Cc = cap_ss * mass_ss 
+        Ch = 1000
+        Rc = 1
         Rj = 1.86 #0.03/(cell_area*0.3) # thermal resistance of the jacket
         Rf = 1.0428 #.1/(.6*cell_area) #0.02/(cell_area*.4) # estimate equivalent thermal resistance relating to forced convection
         Rfj = 1
-        self.thermal_resistances = [Rj,Rfj,Rf]
-        self.thermal_capacitances = [Cc, Cf]
+        self.thermal_resistances = [Rc, Rj,Rfj,Rf]
+        self.thermal_capacitances = [Ch, Cc, Cf]
+
+
+        Rc,Rj,Rfj,Rf = self.thermal_resistances
+        Ch,Cc,Cf = self.thermal_capacitances
+
+
+        self.A = np.array([[-1/Ch * (1/Rc + 1/Rj), 1/(Rc*Ch), 0],
+                [1/(Rc*Cc), -1/Cc * (1/Rc + 1/Rf), 1/(Rf*Cc)],
+                [0, 1/(Rf*Cf), -1/Cf * (1/Rfj + 1/Rf)]])
+        self.B = np.array([1/Ch, 0, 0]).transpose() 
+        self.C = np.array([1, 0, 1]) # we can only sense Th and Tf
 
     def Tf_final(self, power):
         # final value theorem
-        rj,rfj,rf = self.thermal_resistances
-        cc,cf = self.thermal_capacitances
+        rc, rj,rfj,rf = self.thermal_resistances
+        #cc,cf = self.thermal_capacitances
 
         bulk = rfj*rj/((rf+rj)*(rf+rfj))
 
         return power * bulk
 
         
-    def stepResponse(self, x0 = np.array([0,0]), powerPercentage = 1):
+    def stepResponse(self, x0 = None, powerPercentage = 1):
         
 
         assert powerPercentage > 0
@@ -123,19 +136,24 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
 
         # takes in true initial condition x0 = [tc,tf] 
         X0 = x0 - self.Tambient
+        if x0 is None:
+            X0 = np.zeros(3)
         sol = solve_ivp(self.__ss_model,(self.t_initial,self.t_final), X0, t_eval=self.tvec)
 
         yout = sol.y
-        self.temp_mud = yout[1,:] + self.Tambient
+        self.temp_mud = yout[2,:] + self.Tambient
+        self.temp_cellwall = yout[1,:] + self.Tambient
         self.temp_cell = yout[0,:] + self.Tambient
-        print(f"Rj, Rfj, Rf: {self.thermal_resistances}")
-        print(f"Cc, Cf: {self.thermal_capacitances}")
+        print(f"###############  {self.mud.name}   ################")
+        print(f"Rc, Rj, Rfj, Rf: {self.thermal_resistances}")
+        print(f"Ch, Cc, Cf: {self.thermal_capacitances}")
+        print("###################################################")
 
         self.final_fluid_temperature = self.Tf_final(self.input_power) + self.Tambient
 
-        return self.temp_cell, self.temp_mud, 
+        return self.temp_cell, self.temp_mud
     
-    def plot(self, bigfig = True):
+    def plot(self, newfig = True, legend_on = True):
         t1 = self.mud.tvector[np.where(self.mud.heater_dutycycle > 0)[0][0]] # start when input is turned on
         t2 = self.mud.tvector[-1]
         self.plotting_indices = ( self.mud.tvector <= t2 ) & (self.mud.tvector >= t1)
@@ -145,34 +163,45 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         my_fluid_celltemps = self.mud.temp_cell[self.plotting_indices]
 
 
-        if bigfig:
-            plt.figure(figsize=(20,12))
-        else:
-            plt.figure()
+        if newfig:
+            plt.figure(figsize=(10,5))
+        
         plt.plot(self.tvec,self.temp_cell, label="simulated cell temperature")
+        #plt.plot(self.tvec,self.temp_cellwall, label="simulated cell wall temperature")
         plt.plot(self.tvec, self.temp_mud, label="simulated mud temperature")
 
         plt.plot(my_fluid_tvec,my_fluid_celltemps, '--', label="empirical cell temperature")
         plt.plot(my_fluid_tvec, my_fluid_temps, '--', label="empirical mud temperature")
 
-        plt.legend()
+        
         plt.ylabel("Temperature [K]")
         plt.xlabel("Time [s]")
         plt.title(f"{self.mud.name} with step input power of {self.input_power} W with Tf_final = {np.round(self.final_fluid_temperature,3)}")
+        if legend_on:
+            plt.legend(bbox_to_anchor=(1.05, 1.0))
+        plt.tight_layout()
+
+    def transfer_function(self):
+        a = [list(l) for l in self.A]
+        b = [[k] for k in self.B]
+        c = list(self.C)
+
+        return sig.ss2tf(a,b,c,0)
+        
 
     def __ss_model(self, t,x): # x = [Tc-Tamb; Tf-Tamb]
         
-        Rj,Rfj,Rf = self.thermal_resistances
-        Cc,Cf = self.thermal_capacitances
+        Rc,Rj,Rfj,Rf = self.thermal_resistances
+        Ch,Cc,Cf = self.thermal_capacitances
 
 
-        A = np.array([[-(Rj+Rf)/(Cc*Rj*Rf), 1/(Rf*Cc)],
-                [1/(Rf*Cf), - (1/(Rf*Cf) + 1/(Cf*Rfj))]])
-        B = np.array([1/Cc, 0]).transpose() 
-        C = np.array([0, 1])
+        self.A = np.array([[-1/Ch * (1/Rc + 1/Rj), 1/(Rc*Ch), 0],
+                [1/(Rc*Cc), -1/Cc * (1/Rc + 1/Rf), 1/(Rf*Cc)],
+                [0, 1/(Rf*Cf), -1/Cf * (1/Rfj + 1/Rf)]])
+        self.B = np.array([1/Ch, 0, 0]).transpose() 
+        self.C = np.array([1, 0, 1]) # we can only sense Th and Tf
 
-        
-
+    
         if self.controller_on:
             p = self.controller.feedback(x)
         
@@ -188,7 +217,7 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
             p = min(abs(p),self.parameters.max_heater)
         else:
             p = 0
-        xdot = A @ x + B*p + d
+        xdot = self.A @ x + self.B*p + d
 
         #print(x.shape, xdot)
         return xdot
