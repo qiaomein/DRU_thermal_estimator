@@ -167,7 +167,7 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
             plt.figure(figsize=(10,5))
         
         plt.plot(self.tvec,self.temp_cell, label="simulated cell temperature")
-        #plt.plot(self.tvec,self.temp_cellwall, label="simulated cell wall temperature")
+        plt.plot(self.tvec,self.temp_cellwall, label="simulated cell wall temperature")
         plt.plot(self.tvec, self.temp_mud, label="simulated mud temperature")
 
         plt.plot(my_fluid_tvec,my_fluid_celltemps, '--', label="empirical cell temperature")
