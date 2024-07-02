@@ -87,7 +87,10 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         # data time settings
         
         # find where the step input ends
-        self.t_stepfinal = self.tvec[np.where(mud.heater_dutycycle > 0)[0][-1]] - self.mud.tvector[np.where(self.mud.heater_dutycycle > 0)[0][0]]
+        try:
+            self.t_stepfinal = self.tvec[np.where(mud.heater_dutycycle > 0)[0][-1]] - self.mud.tvector[np.where(self.mud.heater_dutycycle > 0)[0][0]]
+        except IndexError:
+            print("NOT A STEP RESPONSE INPUT! Just lettin' ya know. :)")
 
         # parameters
         density_f = 1000 # water
@@ -178,6 +181,8 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
     
     def plot(self, newfig = True, legend_on = True, stepResponse = False):
         t1 = self.mud.tvector[np.where(self.mud.heater_dutycycle > 0)[0][0]] # start when input is turned on
+        if not stepResponse:
+            t1 = 0
         t2 = self.mud.tvector[-1]
         self.plotting_indices = ( self.mud.tvector <= t2 ) & (self.mud.tvector >= t1)
         my_fluid_tvec = self.mud.tvector[self.plotting_indices] - t1
