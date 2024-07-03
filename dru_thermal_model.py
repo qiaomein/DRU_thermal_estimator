@@ -115,7 +115,9 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
                 [1/(Rc*Cc), -1/Cc * (1/Rc + 1/Rf), 1/(Rf*Cc)],
                 [0, 1/(Rf*Cf), -1/Cf * (1/Rfj + 1/Rf)]])
         self.B = np.array([1/Ch, 0, 0]).transpose() 
-        self.C = np.array([1, 0, 1]) # we can only sense Th and Tf
+        self.C = np.matrix([[1, 0, 0],[0,0,1]]) # we can only sense Th and Tf
+
+        self.L = np.matrix([[101.107,3.5377],[3900.2,1.2498e5],[3.2452,204.7754]])
 
     def Tf_final(self, power):
         # final value theorem
@@ -247,6 +249,38 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         else:
             p = 0
         xdot = self.A @ x + self.B*p + d
+
+        #print(x.shape, xdot)
+        return xdot
+
+    def __ss_model_observer(self, t,x): # x = [Tc-Tamb; Tf-Tamb]
+        
+        Rc,Rj,Rfj,Rf = self.thermal_resistances
+        Ch,Cc,Cf = self.thermal_capacitances
+
+
+        self.A = np.array([[-1/Ch * (1/Rc + 1/Rj), 1/(Rc*Ch), 0],
+                [1/(Rc*Cc), -1/Cc * (1/Rc + 1/Rf), 1/(Rf*Cc)],
+                [0, 1/(Rf*Cf), -1/Cf * (1/Rfj + 1/Rf)]])
+        self.B = np.array([1/Ch, 0, 0]).transpose() 
+        self.C = np.array([1, 0, 1]) # we can only sense Th and Tf
+
+        power_history = self.mud.heater_dutycycle[t > self.mud.tvector]
+        if len(power_history) == 0:
+            p = 0
+        else:
+
+            p = self.mud.heater_dutycycle[t > self.mud.tvector][-1]/100 * self.parameters.max_heater
+        
+        
+        d = 0
+        if p > 0:
+            p = min(abs(p),self.parameters.max_heater)
+        else:
+            p = 0
+
+        yerror = 1
+        xdot = self.A @ x + self.B*p + self.L @ yerror
 
         #print(x.shape, xdot)
         return xdot
