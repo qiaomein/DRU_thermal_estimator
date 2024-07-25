@@ -81,7 +81,7 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         # simulation time settings
         self.t_initial = 0
         self.t_final = float(mud.tvector[-1])
-        N = int((self.t_final - self.t_initial)//2)
+        N = len(mud.tvector)
         self.tvec = np.linspace(0,self.t_final,N)
 
         # data time settings

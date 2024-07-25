@@ -86,30 +86,35 @@ class MysteriousMud(object):
         full_dir = f"data\\{filename}"
         timestamps  = []
         self.filename = filename
+        try:
 
-        with open(full_dir, newline ='') as csvfile:
-            creader = csv.reader(csvfile)
-            next(creader) # skip header
-            for c,row in enumerate(creader): # loop through each row in csvfile
-                if c > self.MAX_ENTRIES:
-                    print("TOO MANY ENTIRES!")
-                    break
-                
-                if heaterHeader:
-                    timestamp,heater,celltemp,fluidtemp,dialreading = [row[0],row[7],row[8],row[9],row[10]]
-                else:
-                    timestamp,heater,celltemp,fluidtemp,dialreading = [row[0],row[4],row[8],row[9],row[10]]
-                
-                if not timestamps: # if timestamps is empty
-                    print(f"FLUID DATA FOR {self.name} REFERENCED AT ", timestamp)
-                    self.ref_timestamp = timestamp
-                timestamps.append(timestamp)
-                
-                self.heater_on.append(float(heater))
-                self.temp_cell.append(f2k(float(celltemp)))
-                self.temp_fluid.append(f2k(float(fluidtemp)))
-                self.dial_readings.append(float(dialreading))
-            
+            with open(full_dir, newline ='') as csvfile:
+                creader = csv.reader(csvfile)
+                next(creader) # skip header
+                for c,row in enumerate(creader): # loop through each row in csvfile
+                    if c > self.MAX_ENTRIES:
+                        print("TOO MANY ENTIRES!")
+                        break
+                    
+                    if heaterHeader:
+                        timestamp,heater,celltemp,fluidtemp,dialreading = [row[0],row[7],row[8],row[9],row[10]]
+                    else:
+                        timestamp,heater,celltemp,fluidtemp,dialreading = [row[0],row[4],row[8],row[9],row[10]]
+                    
+                    if not timestamps: # if timestamps is empty
+                        print(f"FLUID DATA FOR {self.name} REFERENCED AT ", timestamp)
+                        self.ref_timestamp = timestamp
+                    timestamps.append(timestamp)
+                    
+                    self.heater_on.append(float(heater))
+                    self.temp_cell.append(f2k(float(celltemp)))
+                    self.temp_fluid.append(f2k(float(fluidtemp)))
+                    self.dial_readings.append(float(dialreading))
+
+        except FileNotFoundError:
+            print(f"{filename} file not found!")
+            return None
+
         self.timestamp = Timestamp(timestamps)
 
         self.tvector = np.array(self.timestamp.timespan)
