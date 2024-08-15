@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
 from scipy.optimize import curve_fit
 import scipy.signal as sig
-import control as ct
 import csv
 from datetime import datetime
 import re
@@ -77,7 +76,7 @@ class MysteriousMud(object):
         self.ref_timestamp = None
         
 
-    def importRawData(self,filename, heaterHeader = False): #heaterHeader is false if using old data (no GELHtrOut(%) header field); if there is that field, this flag is true
+    def importRawData(self,filename, heaterHeader = True): #heaterHeader is false if using old data (no GELHtrOut(%) header field); if there is that field, this flag is true
         
         """
         the importRawData method takes in the filename of the csv file with raw data and imports it into the object

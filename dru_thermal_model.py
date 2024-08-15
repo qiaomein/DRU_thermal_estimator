@@ -2,12 +2,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import scipy.signal as sig
-import control as ct
-from control.matlab import lsim
 import csv
 from datetime import datetime
 import re
 from scipy.signal import savgol_filter
+from scipy import signal
 from scipy.integrate import solve_ivp
 
 from parameters import *
@@ -166,6 +165,15 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
 
 
         sol = solve_ivp(self.__ss_model,(self.t_initial,self.t_final), X0, t_eval=self.tvec)
+        self.sol3 = sol
+
+        # sol_simple = solve_ivp(self.__ss_model_simple,(self.t_initial,self.t_final), X0[0:-1], t_eval=self.tvec)
+        # self.sol2 = sol_simple
+
+        # self.Tc2 = self.sol2.y[0,:] + self.Tambient
+        # self.Tf2 = self.sol2.y[1,:] + self.Tambient
+        
+
 
         yout = sol.y
         self.temp_mud = yout[2,:] + self.Tambient
@@ -178,11 +186,55 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
 
         self.final_fluid_temperature = self.temp_mud[-1]
 
-        return self.temp_cell, self.temp_mud
+        assert len(self.temp_cell) == len(self.tvec)
+
+        return yout
+
+    def sensitivityResponse(self, sx0 = None, pHistory = None):
+
+        x0 = sx0[:3]
+        s0 = sx0[3:]
+        X0 = np.concatenate([x0,s0])
+
+        # takes in true initial condition x0 = [tc,tf] 
+        x0 = x0 - self.Tambient
+        if x0 is None:
+            X0 = np.zeros(6)
+        if pHistory is None:
+            pHistory = self.mud.heater_dutycycle/100 * self.parameters.max_heater
+
+
+        sol = solve_ivp(self.__sensitivity_model,(self.t_initial,self.t_final), X0, t_eval=self.tvec)
+
+        yout = sol.y
+        self.temp_mud = yout[2,:] + self.Tambient
+        self.temp_cellwall = yout[1,:] + self.Tambient
+        self.temp_cell = yout[0,:] + self.Tambient
+
+        temp_mud_sensitivity = yout[5,:]
+        print(f"###############  {self.mud.name}   ################")
+        print(f"Rc, Rj, Rfj, Rf: {self.thermal_resistances}")
+        print(f"Ch, Cc, Cf: {self.thermal_capacitances}")
+        print("###################################################")
+
+        self.final_fluid_temperature = self.temp_mud[-1]
+
+        assert len(self.temp_cell) == len(self.tvec)
+
+
+        plt.figure()
+        plt.plot(self.tvec,temp_mud_sensitivity)
+        plt.title(f"Sensitivity Plot for Cf for {self.mud.name}")
+        plt.xlabel("Time [s]")
+        plt.ylabel("Sensitivity [Kelvin per specific heat unit (J/kgK)]")
+
+        return yout
 
     
-    def plot(self, newfig = True, legend_on = True, stepResponse = False):
-        t1 = self.mud.tvector[np.where(self.mud.heater_dutycycle > 0)[0][0]] # start when input is turned on
+    def plot(self, newfig = True, legend_on = True, stepResponse = False, includeSim = True):
+        if len(set(self.mud.heater_dutycycle)) > 1:
+            t1 = self.mud.tvector[np.where(self.mud.heater_dutycycle > 0)[0][0]] # start when input is turned on
+        
         if not stepResponse:
             t1 = 0
         t2 = self.mud.tvector[-1]
@@ -192,17 +244,32 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         my_fluid_temps = self.mud.temp_fluid[self.plotting_indices]
         my_fluid_celltemps = self.mud.temp_cell[self.plotting_indices]
 
+        
+
+        
+
 
         if newfig:
             plt.figure(figsize=(10,5))
         
-        plt.subplot(2,1,1)
-        plt.plot(self.tvec,self.temp_cell, label="simulated cell temperature")
-        plt.plot(self.tvec,self.temp_cellwall, label="simulated cell wall temperature")
-        plt.plot(self.tvec, self.temp_mud, label="simulated mud temperature")
+        plt.subplot(3,1,1)
+        # for some reason, it takes ~30 seconds for temperatures to react to input power
+        if includeSim: 
+            plt.plot(self.tvec + 30,self.temp_cell, label="simulated cell temperature")
+            plt.plot(self.tvec + 30,self.temp_cellwall, label="simulated cell wall temperature")
+            plt.plot(self.tvec + 30, self.temp_mud, label="simulated mud temperature")
 
-        plt.plot(my_fluid_tvec,my_fluid_celltemps, '--', label="empirical cell temperature")
-        plt.plot(my_fluid_tvec, my_fluid_temps, '--', label="empirical mud temperature")
+            plt.plot(my_fluid_tvec,my_fluid_celltemps, '--', label="empirical cell temperature")
+            plt.plot(my_fluid_tvec, my_fluid_temps, '--', label="empirical mud temperature")
+
+            # plt.plot(self.tvec + 30, self.Tc2, label="simulated 2nd order cell temperature")
+            # plt.plot(self.tvec + 30, self.Tf2, label="simulated 2nd order mud temperature")
+
+        else:
+            mct, mft = min(my_fluid_celltemps),min(my_fluid_temps)
+            plt.plot(my_fluid_tvec,my_fluid_celltemps-mct, '-', label= f"{self.mud.name} cell temperature")
+            plt.subplot(3,1,2)
+            plt.plot(my_fluid_tvec, my_fluid_temps-mft, '-', label=f"{self.mud.name} empirical mud temperature")
 
         
         plt.ylabel("Temperature [K]")
@@ -213,8 +280,9 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
             plt.legend(bbox_to_anchor=(1.05, 1.0))
         plt.tight_layout()
 
-        plt.subplot(2,1,2)
+        plt.subplot(3,1,3)
         plt.plot(self.mud.tvector, self.mud.heater_dutycycle)
+        print(f"Fluid specific heat: {(self.thermal_capacitances[-1]-190)/.3}")
 
     def transfer_function(self):
         a = [list(l) for l in self.A]
@@ -223,6 +291,27 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
 
         return sig.ss2tf(a,b,c,0)
         
+    def bode_plot(self):
+        system = signal.StateSpace(self.A, self.B.reshape((3,1)), self.C.reshape((1,3)), self.D)
+        # Generate the Bode plot data
+        frequencies, mag, phase = signal.bode(system)
+
+        # Plot magnitude
+        plt.subplot(3,1,1)
+        plt.semilogx(frequencies, mag)
+        plt.title('Bode plot - Magnitude')
+        plt.xlabel('Frequency [rad/s]')
+        plt.ylabel('Magnitude [dB]')
+        plt.grid(True)
+
+        # Plot phase
+        plt.subplot(3,1,3)
+        plt.semilogx(frequencies, phase)
+        plt.title('Bode plot - Phase')
+        plt.xlabel('Frequency [rad/s]')
+        plt.ylabel('Phase [degrees]')
+
+
     def __ss_model(self, t,x): # x = [Tc-Tamb; Tf-Tamb]
         
         Rc,Rj,Rfj,Rf = self.thermal_resistances
@@ -232,8 +321,9 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         self.A = np.array([[-1/Ch * (1/Rc + 1/Rj), 1/(Rc*Ch), 0],
                 [1/(Rc*Cc), -1/Cc * (1/Rc + 1/Rf), 1/(Rf*Cc)],
                 [0, 1/(Rf*Cf), -1/Cf * (1/Rfj + 1/Rf)]])
-        self.B = np.array([1/Ch, 0, 0]).transpose() 
-        self.C = np.array([1, 0, 1]) # we can only sense Th and Tf
+        self.B = np.array([1/Ch, 0, 0])
+        self.C = np.array([0, 0, 1]) # we can only sense Th and Tf
+        self.D = 0
 
         power_history = self.mud.heater_dutycycle[t > self.mud.tvector]
         if len(power_history) == 0:
@@ -248,15 +338,93 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
             p = min(abs(p),self.parameters.max_heater)
         else:
             p = 0
-        xdot = self.A @ x + self.B*p + d
+
+
+        # this is viscous heating term (only affects Tf)
+
+        bob_radius = 0.03454/2
+        radial_spacing = .0015
+
+
+        sample_viscosity = 0.1 # mu for calibration oil
+        sample_viscosity = .002 # glycerol room temp
+        volume = 0.0003 # cubic meters
+
+        rpm = 600
+
+        qvh = volume * sample_viscosity * (bob_radius*rpm*2*np.pi/60/radial_spacing)**2
+
+        VH = np.array([0,0,1]) * qvh/100
+
+
+        xdot = self.A @ x + self.B*p + d #  + VH
 
         #print(x.shape, xdot)
         return xdot
 
-    def __ss_model_observer(self, t,x): # x = [Tc-Tamb; Tf-Tamb]
+    def __ss_model_simple(self, t,x): # x = [Tc-Tamb; Tf-Tamb]
+        
+        Rf,Rj,Rfj = self.thermal_resistances2
+        Cc,Cf = self.thermal_capacitances2
+
+
+        self.A = np.array([[-1/Cc * (1/Rf + 1/Rj), 1/(Rj*Cc)],
+                           [1/(Rf*Cf), -1/Cf * (1/Rf + 1/Rfj)]])
+        self.B = np.array([1/Cc, 0])
+
+        power_history = self.mud.heater_dutycycle[t > self.mud.tvector]
+        if len(power_history) == 0:
+            p = 0
+        else:
+
+            p = self.mud.heater_dutycycle[t > self.mud.tvector][-1]/100 * self.parameters.max_heater
+        
+        
+        d = 0
+        if p > 0:
+            p = min(abs(p),self.parameters.max_heater)
+        else:
+            p = 0
+
+
+        # this is viscous heating term (only affects Tf)
+
+        bob_radius = 0.03454/2
+        radial_spacing = .0015
+        sample_viscosity = 0.1 # mu for calibration oil
+        sample_viscosity = .002 # glycerol room temp
+        volume = 0.0003 # cubic meter
+        rpm = 600
+        qvh = volume * sample_viscosity * (bob_radius*rpm*2*np.pi/60/radial_spacing)**2
+        VH = np.array([0,0,1]) * qvh/100
+
+
+        xdot = self.A @ x + self.B*p + d #  + VH
+
+        #print(x.shape, xdot)
+        return xdot
+
+
+
+    def __sensitivity_model(self, t, xS): # x = [Tc-Tamb; Tf-Tamb]
+        # xS is first 3 x and last 3 sensitivity x/dCf; xS is 6x1 state
         
         Rc,Rj,Rfj,Rf = self.thermal_resistances
         Ch,Cc,Cf = self.thermal_capacitances
+
+        power_history = self.mud.heater_dutycycle[t > self.mud.tvector]
+        if len(power_history) == 0:
+            p = 0
+        else:
+
+            p = self.mud.heater_dutycycle[t > self.mud.tvector][-1]/100 * self.parameters.max_heater
+        
+        
+        d = 0
+        if p > 0:
+            p = min(abs(p),self.parameters.max_heater)
+        else:
+            p = 0
 
 
         self.A = np.array([[-1/Ch * (1/Rc + 1/Rj), 1/(Rc*Ch), 0],
@@ -265,25 +433,22 @@ class ThermalModel(object): # one instance of a thermal model (fixed set of para
         self.B = np.array([1/Ch, 0, 0]).transpose() 
         self.C = np.array([1, 0, 1]) # we can only sense Th and Tf
 
-        power_history = self.mud.heater_dutycycle[t > self.mud.tvector]
-        if len(power_history) == 0:
-            p = 0
-        else:
+        dAdCf = np.array([[0, 0, 0],
+                [0, 0, 0],
+                [0, -1/(Rf*Cf**2), 1/Cf**2 * (1/Rfj + 1/Rf)]])
 
-            p = self.mud.heater_dutycycle[t > self.mud.tvector][-1]/100 * self.parameters.max_heater
-        
-        
-        d = 0
-        if p > 0:
-            p = min(abs(p),self.parameters.max_heater)
-        else:
-            p = 0
+        S = xS[3:]
+        x = xS[:3]
 
-        yerror = 1
-        xdot = self.A @ x + self.B*p + self.L @ yerror
+        xdot = self.A @ x + self.B * p
+
+        Sdot = self.A @ S + dAdCf @  x
+
+        xSdot = np.concatenate([xdot,Sdot])
 
         #print(x.shape, xdot)
-        return xdot
+        return xSdot
+
 
 
     def __ss_model_step(self, t,x): # x = [Tc-Tamb; Tf-Tamb]

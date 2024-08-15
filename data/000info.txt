@@ -1,0 +1,6 @@
+all step responses are from water
+
+sensitivity tests are all conducted under same heater inputs
+
+viscous heating test is glycerol spinning at 600 rpm and looking at viscous heating
+
